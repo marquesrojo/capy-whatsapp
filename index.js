@@ -35,10 +35,12 @@ async function connectToWhatsApp() {
     if (connection === 'close') {
       isConnected = false
       qrCodeData = null
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
-      console.log('Conexión cerrada, reconectando:', shouldReconnect)
+      const statusCode = lastDisconnect?.error?.output?.statusCode
+      const errorMsg = lastDisconnect?.error?.message
+      console.log('Conexión cerrada. Status:', statusCode, 'Error:', errorMsg)
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut
       if (shouldReconnect) {
-        setTimeout(connectToWhatsApp, 3000)
+        setTimeout(connectToWhatsApp, 5000)
       }
     } else if (connection === 'open') {
       isConnected = true
