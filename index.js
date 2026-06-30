@@ -1,5 +1,6 @@
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys')
 const { SocksProxyAgent } = require('socks-proxy-agent')
+const { HttpsProxyAgent } = require('https-proxy-agent')
 const express = require('express')
 const QRCode = require('qrcode')
 const pino = require('pino')
@@ -27,14 +28,19 @@ async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
 
     const proxyUrl = process.env.PROXY_URL
-    const agent = proxyUrl ? new SocksProxyAgent(proxyUrl) : undefined
-    if (proxyUrl) console.log('Proxy activo:', proxyUrl.split('@')[1])
+    let agent = undefined
+    if (proxyUrl) {
+      agent = proxyUrl.startsWith('socks')
+        ? new SocksProxyAgent(proxyUrl)
+        : new HttpsProxyAgent(proxyUrl)
+      console.log('Proxy activo:', proxyUrl.split('@')[1])
+    }
 
     sock = makeWASocket({
       auth: state,
       logger: pino({ level: 'silent' }),
       browser: ['Capy', 'Chrome', '120.0.0'],
-      connectTimeoutMs: 30000,
+      connectTimeoutMs: 60000,
       agent: agent,
       fetchAgent: agent,
     })
