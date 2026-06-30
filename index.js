@@ -1,4 +1,5 @@
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys')
+const { SocksProxyAgent } = require('socks-proxy-agent')
 const express = require('express')
 const QRCode = require('qrcode')
 const pino = require('pino')
@@ -25,12 +26,17 @@ async function connectToWhatsApp() {
 
     const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
 
+    const proxyUrl = process.env.PROXY_URL
+    const agent = proxyUrl ? new SocksProxyAgent(proxyUrl) : undefined
+    if (proxyUrl) console.log('Proxy activo:', proxyUrl.split('@')[1])
+
     sock = makeWASocket({
       auth: state,
       logger: pino({ level: 'silent' }),
-      // Sin printQRInTerminal — lo manejamos nosotros
       browser: ['Capy', 'Chrome', '120.0.0'],
       connectTimeoutMs: 30000,
+      agent: agent,
+      fetchAgent: agent,
     })
 
     sock.ev.on('connection.update', async (update) => {
@@ -61,7 +67,6 @@ async function connectToWhatsApp() {
           qrCodeData = null
         }
 
-        // Reconectar solo si no fue logout — con delay de 10s
         if (statusCode !== DisconnectReason.loggedOut) {
           console.log('Reconectando en 10 segundos...')
           setTimeout(() => {
@@ -135,6 +140,5 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`Capy WhatsApp corriendo en puerto ${PORT}`)
-  // Conectar WhatsApp después de que Express esté escuchando
   setTimeout(connectToWhatsApp, 2000)
 })
