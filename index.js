@@ -12,77 +12,72 @@ const API_KEY = process.env.CAPY_API_KEY || 'capy-whatsapp-secret'
 let sock = null
 let qrCodeData = null
 let isConnected = false
-let reconnectAttempts = 0
+let isConnecting = false
 
 async function connectToWhatsApp() {
+  if (isConnecting) return
+  isConnecting = true
+
   try {
-    // Crear carpeta auth si no existe
     if (!fs.existsSync('./auth_info')) {
-      fs.mkdirSync('./auth_info')
+      fs.mkdirSync('./auth_info', { recursive: true })
     }
 
     const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
-    const version = [2, 3000, 1015901307]
-    
-    console.log('Iniciando conexión...')
 
     sock = makeWASocket({
-      version,
       auth: state,
-      logger: pino({ level: 'warn' }),
-      printQRInTerminal: true,
+      logger: pino({ level: 'silent' }),
+      // Sin printQRInTerminal — lo manejamos nosotros
       browser: ['Capy', 'Chrome', '120.0.0'],
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000,
+      connectTimeoutMs: 30000,
     })
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
-      console.log('Connection update:', JSON.stringify({ connection, qr: !!qr }))
 
       if (qr) {
-        try {
-          qrCodeData = await QRCode.toDataURL(qr)
-          isConnected = false
-          reconnectAttempts = 0
-          console.log('✅ QR generado exitosamente')
-        } catch (err) {
-          console.error('Error generando QR:', err)
-        }
+        console.log('QR recibido, generando imagen...')
+        qrCodeData = await QRCode.toDataURL(qr)
+        console.log('QR listo en /qr')
+      }
+
+      if (connection === 'open') {
+        isConnected = true
+        isConnecting = false
+        qrCodeData = null
+        console.log('✅ WhatsApp conectado!')
       }
 
       if (connection === 'close') {
         isConnected = false
+        isConnecting = false
         const statusCode = lastDisconnect?.error?.output?.statusCode
-        const errorMsg = lastDisconnect?.error?.message || 'Unknown'
-        console.log(`Conexión cerrada. Status: ${statusCode}, Error: ${errorMsg}`)
-        
+        console.log('Conexión cerrada. Status:', statusCode)
+
         if (statusCode === DisconnectReason.loggedOut) {
-          console.log('Sesión cerrada — borrando credenciales')
+          console.log('Sesión expirada — borrando credenciales')
           fs.rmSync('./auth_info', { recursive: true, force: true })
           qrCodeData = null
         }
-        
-        reconnectAttempts++
-        const delay = Math.min(reconnectAttempts * 3000, 30000)
-        console.log(`Reconectando en ${delay}ms (intento ${reconnectAttempts})`)
-        setTimeout(connectToWhatsApp, delay)
-        
-      } else if (connection === 'open') {
-        isConnected = true
-        qrCodeData = null
-        reconnectAttempts = 0
-        console.log('✅ WhatsApp conectado!')
+
+        // Reconectar solo si no fue logout — con delay de 10s
+        if (statusCode !== DisconnectReason.loggedOut) {
+          console.log('Reconectando en 10 segundos...')
+          setTimeout(() => {
+            isConnecting = false
+            connectToWhatsApp()
+          }, 10000)
+        }
       }
     })
 
     sock.ev.on('creds.update', saveCreds)
 
   } catch (err) {
-    console.error('Error al conectar:', err)
-    reconnectAttempts++
-    setTimeout(connectToWhatsApp, 5000)
+    console.error('Error crítico:', err.message)
+    isConnecting = false
+    setTimeout(connectToWhatsApp, 15000)
   }
 }
 
@@ -94,27 +89,28 @@ function auth(req, res, next) {
 
 app.get('/qr', (req, res) => {
   if (isConnected) {
-    return res.send('<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#1a1a1a;color:white"><h2>✅ WhatsApp conectado!</h2></body></html>')
-  }
-  if (!qrCodeData) {
-    return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#1a1a1a;color:white">
-      <h2>Generando QR...</h2>
-      <p>Intento de conexión: ${reconnectAttempts}</p>
-      <p>Recargá en unos segundos</p>
-      <script>setTimeout(()=>location.reload(),4000)</script>
+    return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#111;color:white">
+      <h2>✅ WhatsApp conectado!</h2>
     </body></html>`)
   }
-  res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#1a1a1a;color:white">
+  if (!qrCodeData) {
+    return res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#111;color:white">
+      <h2>⏳ Esperando QR...</h2>
+      <p>El servicio se está conectando a WhatsApp</p>
+      <script>setTimeout(()=>location.reload(),5000)</script>
+    </body></html>`)
+  }
+  res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#111;color:white">
     <h2>Escaneá este QR con WhatsApp</h2>
     <p>WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
     <img src="${qrCodeData}" style="width:280px;border-radius:12px;margin:20px auto;display:block" />
-    <p style="color:#888">Esta página se actualiza automáticamente</p>
-    <script>setTimeout(()=>location.reload(),20000)</script>
+    <p style="color:#666;font-size:12px">El QR expira en 60 segundos</p>
+    <script>setTimeout(()=>location.reload(),60000)</script>
   </body></html>`)
 })
 
 app.get('/status', auth, (req, res) => {
-  res.json({ connected: isConnected, hasQR: !!qrCodeData, attempts: reconnectAttempts })
+  res.json({ connected: isConnected, hasQR: !!qrCodeData, connecting: isConnecting })
 })
 
 app.post('/send', auth, async (req, res) => {
@@ -128,13 +124,12 @@ app.post('/send', auth, async (req, res) => {
     await sock.sendMessage(jid, { text: message })
     res.json({ success: true, to: jid })
   } catch (err) {
-    console.error('Error enviando:', err)
     res.status(500).json({ error: err.message })
   }
 })
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', connected: isConnected, attempts: reconnectAttempts })
+  res.json({ status: 'ok', connected: isConnected, connecting: isConnecting })
 })
 
 const PORT = process.env.PORT || 3000
