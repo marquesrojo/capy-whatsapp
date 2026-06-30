@@ -135,5 +135,6 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`Capy WhatsApp corriendo en puerto ${PORT}`)
-  connectToWhatsApp()
+  // Conectar WhatsApp después de que Express esté escuchando
+  setTimeout(connectToWhatsApp, 2000)
 })
